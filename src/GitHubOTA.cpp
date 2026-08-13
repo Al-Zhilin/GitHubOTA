@@ -1,8 +1,9 @@
 #include <GitHubOTA.h>
 
 
-GitHubOTA::Status GitHubOTA::begin(const GitHubOTA::Config& cfg) {
+GitHubOTA::Status GitHubOTA::begin(const GitHubOTA::Config& cfg, Client& networkClient) {
     _config = cfg;
+    _client = &networkClient;
 
     // Валидация введенных полей
     if (!strlen(_config.repoName) || !strlen(_config.repoOwner) || !strlen(_config.assetName) || !strlen(_config.currentVersion)) {
@@ -25,10 +26,15 @@ GitHubOTA::Status GitHubOTA::begin(const GitHubOTA::Config& cfg) {
         _prefs.putUChar("bootAttempts", ++boot_attempts);
 
         if (boot_attempts > _config.maxBootAttempts) {
-            const esp_partition_t* rollback_targer = esp_ota_get_next_update_partition(NULL);
-            esp_err_t err = esp_ota_set_boot_partition(rollback_targer);
-            _prefs.putUChar("bootAttemps", 0);
+            _prefs.putUChar("bootAttempts", 0);
             _prefs.putBool("pendingValidation", false);
+
+            // выискиваем нужный раздел для отката
+            char savedLabel[17] = {0};
+            _prefs.getString("prevLabel", savedLabel, 17);
+            const esp_partition_t* target = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, savedLabel);
+            if (target) esp_ota_set_boot_partition(target);
+
 
             _state = State::ROLLING_BACK;
             if (_stateCallback) _stateCallback(_state);
@@ -43,3 +49,4 @@ GitHubOTA::Status GitHubOTA::begin(const GitHubOTA::Config& cfg) {
         }
     }
 }
+

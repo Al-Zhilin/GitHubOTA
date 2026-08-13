@@ -2,7 +2,9 @@
 #pragma once
 #include <Arduino.h>
 #include <Preferences.h>
+#include <Client.h>
 #include "esp_ota_ops.h"
+#include "esp_partition.h"
 
 class GitHubOTA {
     public:
@@ -51,7 +53,7 @@ class GitHubOTA {
             INCORRECT_CONFIG                                        // передан некорректный конфиг
         };
 
-        Status begin(const Config& cfg);                            // начало работы: сохраняет конфиг И проверяет в NVS, не является ли этот запуск "неподтверждённым" после недавнего OTA (см. confirmValid)
+        Status begin(const Config& cfg, Client& networkClient);     // начало работы: сохраняет конфиг И проверяет в NVS, не является ли этот запуск "неподтверждённым" после недавнего OTA (см. confirmValid)
         Status handle();                                            // тикер из loop(): 1) если пришло время — checkUpdates()/update() по таймеру и Policy; 2) если ждём подтверждения новой прошивки — считает autoConfirmTimeoutMs и сам вызывает confirmValid(), если хост не вызвал явно
         Status checkUpdates();                                      // ручная проверка обновлений
         Status update();                                            // ручной запуск процесса обновления
@@ -69,6 +71,7 @@ class GitHubOTA {
         
     private:
         void (*_stateCallback) (State newState) = nullptr;          // указатель на функцию - коллбэк
+        Client* _client = nullptr;
         Config _config;
         State _state = State::IDLE;
         Status _lastError = Status::SUCCESS;
