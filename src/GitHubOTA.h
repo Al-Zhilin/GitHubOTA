@@ -2,9 +2,7 @@
 #pragma once
 #include <Arduino.h>
 #include <Preferences.h>
-#include <Client.h>
-#include "esp_ota_ops.h"
-#include "esp_partition.h"
+#include <NetworkClient.h>
 
 class GitHubOTA {
     public:
@@ -50,10 +48,18 @@ class GitHubOTA {
             CHECKSUM_MISMATCH,                                      // ошибка проверки контрольной суммы
             FLASH_WRITE_ERROR,                                      // ошибка записи на flash
             ALREADY_UP_TO_DATE,                                     // обновлено до последней версии
+            UPDATE_AVAILABLE,                                       // доступно новое обновление
             INCORRECT_CONFIG                                        // передан некорректный конфиг
         };
+        
+        enum class ComparisonResult {
+            EQUALLY,
+            MORE,
+            LESS,
+            ERROR_GET_SEMVER,
+        };
 
-        Status begin(const Config& cfg, Client& networkClient);     // начало работы: сохраняет конфиг И проверяет в NVS, не является ли этот запуск "неподтверждённым" после недавнего OTA (см. confirmValid)
+        Status begin(const Config& cfg, NetworkClient& networkClient);     // начало работы: сохраняет конфиг И проверяет в NVS, не является ли этот запуск "неподтверждённым" после недавнего OTA (см. confirmValid)
         Status handle();                                            // тикер из loop(): 1) если пришло время — checkUpdates()/update() по таймеру и Policy; 2) если ждём подтверждения новой прошивки — считает autoConfirmTimeoutMs и сам вызывает confirmValid(), если хост не вызвал явно
         Status checkUpdates();                                      // ручная проверка обновлений
         Status update();                                            // ручной запуск процесса обновления
@@ -71,12 +77,14 @@ class GitHubOTA {
         
     private:
         void (*_stateCallback) (State newState) = nullptr;          // указатель на функцию - коллбэк
-        Client* _client = nullptr;
+        ComparisonResult versionComparison(const char*);
+        NetworkClient* _client = nullptr;
         Config _config;
         State _state = State::IDLE;
         Status _lastError = Status::SUCCESS;
         bool _initialized = false;
         bool _pendingValidation = false;
         uint32_t _bootTimestamp = 0;
+        char availableVersion[16] = {0};
         Preferences _prefs;
 };
