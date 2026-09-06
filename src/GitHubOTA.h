@@ -46,7 +46,8 @@ class GitHubOTA {
             NO_ASSET_FOUND,                                         // не найден файл ассетов
             INSUFFICIENT_SPACE,                                     // недостаточно свободного места              
             CHECKSUM_MISMATCH,                                      // ошибка проверки контрольной суммы
-            FLASH_WRITE_ERROR,                                      // ошибка записи на flash
+            FLASH_ERROR,                                            // ошибка записи/чтения/очистки flash
+            ANOTHER_UPDATE_ERROR,                                   // другая ошибка при работе с Update()
             ALREADY_UP_TO_DATE,                                     // обновлено до последней версии
             UPDATE_AVAILABLE,                                       // доступно новое обновление
             INCORRECT_CONFIG                                        // передан некорректный конфиг
@@ -78,6 +79,7 @@ class GitHubOTA {
     private:
         void (*_stateCallback) (State newState) = nullptr;          // указатель на функцию - коллбэк
         ComparisonResult versionComparison(const char*);
+        Status mapUpdateError();                                    // переводит ошибки Update() класса в статусы типа Status
         NetworkClient* _client = nullptr;
         Config _config;
         State _state = State::IDLE;
@@ -85,6 +87,6 @@ class GitHubOTA {
         bool _initialized = false;
         bool _pendingValidation = false;
         uint32_t _bootTimestamp = 0;
-        char availableVersion[16] = {0};
+        char _availableVersion[16] = {0};
         Preferences _prefs;
 };
