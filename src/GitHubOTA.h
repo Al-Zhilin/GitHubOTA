@@ -31,7 +31,7 @@ class GitHubOTA {
             DOWNLOADING,                                            // обновление скачивается
             VERIFYING,                                              // обновление проверяется
             REBOOTING,                                              // перезагрузка для применения обновления
-            FAILED,                                                 // ошибка обновления
+            CAUGHT_ERROR,                                           // произошла какая-то ошибка
             ROLLING_BACK,                                           // откатываемся назад: обновление сломало нормальную работу
         };
 
@@ -73,14 +73,17 @@ class GitHubOTA {
         bool isPendingValidation() const;                           // ожидает запроса валидации
         void getAvailableVersion(char* vers, size_t buf_size) const;// получить номер версии, доступной для оформления
 
-        // Коллбек
-        void onStateChange(void (*callback)(State newState));
+        // Коллбеки
+        void onStateChange(void (*callback)(State newState));       // при смене состояния
+        void onProgress(void (*callback)(size_t written, size_t total));    // при скачивании обновления
         
     private:
-        void (*_stateCallback) (State newState) = nullptr;          // указатель на функцию - коллбэк
+        void (*_stateCallback) (State newState) = nullptr;          // указатель на функцию - коллбэк смены состояния
+        void (*_progressCallback)(size_t written, size_t total) = nullptr; // указатель на функцию - коллбэк прогресса скачивания обновления
         ComparisonResult versionComparison(const char*);
         Status mapUpdateError();                                    // переводит ошибки Update() класса в статусы типа Status
         NetworkClient* _client = nullptr;
+        Status setFailStatus(Status status);  
         Config _config;
         State _state = State::IDLE;
         Status _lastError = Status::SUCCESS;

@@ -5,6 +5,13 @@
 #include <esp_partition.h>
 #include <Update.h>
 
+void GitHubOTA::onStateChange(void (*callback)(State newState)) {
+    _stateCallback = callback;
+}
+
+void GitHubOTA::onProgress(void (*callback)(size_t written, size_t total)) {
+    _progressCallback = callback;
+}
 
 GitHubOTA::Status GitHubOTA::begin(const GitHubOTA::Config& cfg, NetworkClient& networkClient) {
     _config = cfg;
@@ -12,7 +19,7 @@ GitHubOTA::Status GitHubOTA::begin(const GitHubOTA::Config& cfg, NetworkClient& 
 
     // Валидация введенных полей
     if (!strlen(_config.repoName) || !strlen(_config.repoOwner) || !strlen(_config.assetName) || !strlen(_config.currentVersion)) {
-        _lastError = Status::INCORRECT_CONFIG;
+        setFailStatus(Status::INCORRECT_CONFIG);
         return _lastError;
     }
 
@@ -58,6 +65,7 @@ GitHubOTA::Status GitHubOTA::begin(const GitHubOTA::Config& cfg, NetworkClient& 
 GitHubOTA::Status GitHubOTA::checkUpdates() {
     if (!_initialized)  return Status::NOT_INITIALIZED;
     _state = State::CHECKING;
+    if (_stateCallback) _stateCallback(_state);
 
     char url[256] = {0};
     snprintf(url, 256, "https://api.github.com/repos/%s/%s/releases/latest", _config.repoOwner, _config.repoName);
@@ -70,8 +78,8 @@ GitHubOTA::Status GitHubOTA::checkUpdates() {
 
     if (returned_code != 200) {
         http.end();
-        if (returned_code < 0)  return Status::NETWORK_ERROR;           // ошибка сети (подключения)
-        else    return Status::HTTP_ERROR;                              // ошибка в процессе запроса
+        if (returned_code < 0)  return setFailStatus(Status::NETWORK_ERROR);           // ошибка сети (подключения)
+        else    return setFailStatus(Status::HTTP_ERROR);                       // ошибка в процессе запроса
     }
     // создаем фильтр: из всего ответа github API будем парсить только те поля, которые нам нужны и не тратить память на остальные
     JsonDocument filter;
@@ -83,26 +91,28 @@ GitHubOTA::Status GitHubOTA::checkUpdates() {
     DeserializationError err = deserializeJson(doc, http.getStream(), DeserializationOption::Filter(filter));
     http.end();
 
-    if (err)    return Status::JSON_PARSE_ERROR;
+    if (err)    return setFailStatus(Status::JSON_PARSE_ERROR);
 
     ComparisonResult result = versionComparison(doc["tag_name"].as<const char*>());
 
     switch (result) {
         case ComparisonResult::ERROR_GET_SEMVER:
-            return Status::JSON_PARSE_ERROR;
+            return setFailStatus(Status::JSON_PARSE_ERROR);
 
         case ComparisonResult::EQUALLY:
         case ComparisonResult::LESS:
             _state = State::UP_TO_DATE;
+            if (_stateCallback) _stateCallback(_state);
             return Status::ALREADY_UP_TO_DATE;
         
         case ComparisonResult::MORE:
             snprintf(_availableVersion, sizeof(_availableVersion), "%s" , doc["tag_name"].as<const char*>());
             _state = State::UPDATE_AVAILABLE;
+            if (_stateCallback) _stateCallback(_state);
             return Status::UPDATE_AVAILABLE;
 
         default:
-            return Status::JSON_PARSE_ERROR;
+            return setFailStatus(Status::JSON_PARSE_ERROR);
         
     }
 }
@@ -136,8 +146,8 @@ GitHubOTA::Status GitHubOTA::update() {
 
     if (http_code != 200) {
         http.end();
-        if (http_code < 0)  return Status::NETWORK_ERROR;               // ошибка сети (подключения)
-        else    return Status::HTTP_ERROR;                              // ошибка в процессе запроса
+        if (http_code < 0)  return setFailStatus(Status::NETWORK_ERROR);               // ошибка сети (подключения)
+        else    return setFailStatus(Status::HTTP_ERROR);                              // ошибка в процессе запроса
     }
     // создаем фильтр: из всего ответа github API будем парсить только те поля, которые нам нужны и не тратить память на остальные
     JsonDocument filter;
@@ -166,9 +176,13 @@ GitHubOTA::Status GitHubOTA::update() {
         }
     }   
 
-    if (strlen(download_urls[0]) == 0 || strlen(download_urls[1]) == 0) return Status::NO_ASSET_FOUND;
+    if (strlen(download_urls[0]) == 0 || strlen(download_urls[1]) == 0) return setFailStatus(Status::NO_ASSET_FOUND);
 
-    if (versionComparison(doc["tag_name"].as<const char*>()) != ComparisonResult::MORE) return Status::ALREADY_UP_TO_DATE;
+    if (versionComparison(doc["tag_name"].as<const char*>()) != ComparisonResult::MORE) {
+        _state = State::UP_TO_DATE;
+        if (_stateCallback) _stateCallback(_state);
+        return Status::ALREADY_UP_TO_DATE;
+    }
 
     http.begin(*_client, download_urls[1]);
     http.setTimeout(_config.httpTimeoutMs);
@@ -179,8 +193,8 @@ GitHubOTA::Status GitHubOTA::update() {
     http_code = http.GET();                     // запрос 1: ХЭШ обновления
     if (http_code != 200) {
         http.end();
-        if (http_code < 0)  return Status::NETWORK_ERROR;               // ошибка сети (подключения)
-        else    return Status::HTTP_ERROR;                              // ошибка в процессе запроса
+        if (http_code < 0)  return setFailStatus(Status::NETWORK_ERROR);               // ошибка сети (подключения)
+        else    return setFailStatus(Status::HTTP_ERROR);                              // ошибка в процессе запроса
     }
 
     String MD5Hash = http.getString();
@@ -195,27 +209,27 @@ GitHubOTA::Status GitHubOTA::update() {
 
     if (http_code != 200) {
         http.end();
-        if (http_code < 0)  return Status::NETWORK_ERROR;               // ошибка сети (подключения)
-        else    return Status::HTTP_ERROR;                              // ошибка в процессе запроса
+        if (http_code < 0)  return setFailStatus(Status::NETWORK_ERROR);               // ошибка сети (подключения)
+        else    return setFailStatus(Status::HTTP_ERROR);                              // ошибка в процессе запроса
     }
     int contentLength = http.getSize();
     http.end();
 
     if (!Update.setMD5(MD5Hash.c_str())) {
-        return Status::CHECKSUM_MISMATCH;
+        return setFailStatus(Status::CHECKSUM_MISMATCH);
     }
     if (!Update.begin(contentLength)) {
-        return mapUpdateError();
+        return setFailStatus(mapUpdateError());
     }
 
-    // Здесь нужно настроить onProgress (помоги разобраться)
+    if (_progressCallback) Update.onProgress(_progressCallback);
 
     Update.writeStream(http.getStream());           // читаем файл как стрим поток
 
     _state = State::VERIFYING;
 
     if (!Update.end(true)) {
-        return mapUpdateError();                    // пробразываем разшифрованную ошибку и выходим
+        return setFailStatus(mapUpdateError());                    // пробразываем разшифрованную ошибку и выходим
     }
 
     // если все получилось - переходим к перезагрузке и применению ошибки
@@ -246,4 +260,11 @@ GitHubOTA::Status GitHubOTA::mapUpdateError() {
         default:
             return Status::ANOTHER_UPDATE_ERROR;
     }
+}
+
+GitHubOTA::Status GitHubOTA::setFailStatus(Status status) {
+    _lastError = status;
+    _state = State::CAUGHT_ERROR;
+    if (_stateCallback) _stateCallback(_state);
+    return status;
 }
