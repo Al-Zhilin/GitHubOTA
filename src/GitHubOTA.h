@@ -68,22 +68,31 @@ class GitHubOTA {
         Status rejectAndRollback();                                 // хост явно просит немедленный откат на предыдущий раздел (не дожидаясь исчерпания maxBootAttemps)
         
         // Геттеры
-        State getState() const;                                     // текущее состояние работы
-        Status getLastError() const;                                // получить последнюю ошибку
-        bool isPendingValidation() const;                           // ожидает запроса валидации
+        State getState() const {                                    // текущее состояние работы
+            return _state;
+        }
+        Status getLastError() const {                               // получить последнюю ошибку
+            return _lastError;
+        }
+        bool isPendingValidation() const {                          // ожидает запроса валидации
+            return _pendingValidation;
+        }
         void getAvailableVersion(char* vers, size_t buf_size) const;// получить номер версии, доступной для оформления
 
         // Коллбеки
         void onStateChange(void (*callback)(State newState));       // при смене состояния
         void onProgress(void (*callback)(size_t written, size_t total));    // при скачивании обновления
         
+
+
     private:
         void (*_stateCallback) (State newState) = nullptr;          // указатель на функцию - коллбэк смены состояния
         void (*_progressCallback)(size_t written, size_t total) = nullptr; // указатель на функцию - коллбэк прогресса скачивания обновления
         ComparisonResult versionComparison(const char*);
         Status mapUpdateError();                                    // переводит ошибки Update() класса в статусы типа Status
         NetworkClient* _client = nullptr;
-        Status setFailStatus(Status status);  
+        Status setFailStatus(Status status);
+        Status performRollback();
         Config _config;
         State _state = State::IDLE;
         Status _lastError = Status::SUCCESS;

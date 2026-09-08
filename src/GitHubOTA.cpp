@@ -38,20 +38,7 @@ GitHubOTA::Status GitHubOTA::begin(const GitHubOTA::Config& cfg, NetworkClient& 
         _prefs.putUChar("bootAttempts", ++boot_attempts);
 
         if (boot_attempts > _config.maxBootAttempts) {
-            _prefs.putUChar("bootAttempts", 0);
-            _prefs.putBool("pendingValidation", false);
-
-            // выискиваем нужный раздел для отката
-            char savedLabel[17] = {0};
-            _prefs.getString("prevLabel", savedLabel, 17);
-            const esp_partition_t* target = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, savedLabel);
-            if (target) esp_ota_set_boot_partition(target);
-
-
-            _state = State::ROLLING_BACK;
-            if (_stateCallback) _stateCallback(_state);
-            ESP.restart();
-            return Status::SUCCESS;                 // формальность компилятора
+            return performRollback();
         }
 
         else {
@@ -267,4 +254,38 @@ GitHubOTA::Status GitHubOTA::setFailStatus(Status status) {
     _state = State::CAUGHT_ERROR;
     if (_stateCallback) _stateCallback(_state);
     return status;
+}
+
+GitHubOTA::Status GitHubOTA::confirmValid() {
+    if (!_initialized)  return Status::NOT_INITIALIZED;
+    if (!_pendingValidation)    return Status::SUCCESS;
+
+    _pendingValidation = false;
+    _prefs.putBool("pendingValidation", false);
+    _prefs.putUChar("bootAttempts", 0);
+
+    return Status::SUCCESS;
+}
+
+GitHubOTA::Status GitHubOTA::rejectAndRollback() {
+    if (!_initialized)  return Status::NOT_INITIALIZED;
+    if (!_pendingValidation)    return Status::SUCCESS;
+
+    return performRollback();  
+}
+
+GitHubOTA::Status GitHubOTA::performRollback() {
+    _prefs.putUChar("bootAttempts", 0);
+    _prefs.putBool("pendingValidation", false);
+
+    // выискиваем нужный раздел для отката
+    char savedLabel[17] = {0};
+    _prefs.getString("prevLabel", savedLabel, 17);
+    const esp_partition_t* target = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, savedLabel);
+    if (target) esp_ota_set_boot_partition(target);
+
+    _state = State::ROLLING_BACK;
+    if (_stateCallback) _stateCallback(_state);
+    ESP.restart();
+    return Status::SUCCESS;                 // формальность компилятора
 }
