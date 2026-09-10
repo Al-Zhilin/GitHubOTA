@@ -1,9 +1,5 @@
 #include <GitHubOTA.h>
 #include <ArduinoJson.h>
-#include <HTTPClient.h>
-#include <esp_ota_ops.h>
-#include <esp_partition.h>
-#include <Update.h>
 
 void GitHubOTA::onStateChange(void (*callback)(State newState)) {
     _stateCallback = callback;
@@ -13,9 +9,11 @@ void GitHubOTA::onProgress(void (*callback)(size_t written, size_t total)) {
     _progressCallback = callback;
 }
 
-GitHubOTA::Status GitHubOTA::begin(const GitHubOTA::Config& cfg, NetworkClient& networkClient) {
+GitHubOTA::Status GitHubOTA::begin(const GitHubOTA::Config& cfg, GitHubOTAClient& networkClient) {
     _config = cfg;
     _client = &networkClient;
+    
+    _lastCheckMillis = 0 - _config.checkIntervalMs;
 
     // Валидация введенных полей
     if (!strlen(_config.repoName) || !strlen(_config.repoOwner) || !strlen(_config.assetName) || !strlen(_config.currentVersion)) {
@@ -23,10 +21,10 @@ GitHubOTA::Status GitHubOTA::begin(const GitHubOTA::Config& cfg, NetworkClient& 
         return _lastError;
     }
 
-    _prefs.begin("gh_ota", false);
-    _pendingValidation = _prefs.getBool("pendingValidation", false);
+    EEPROM.begin(sizeof(PersistedState));
+    loadPersistedState();                       // выгружаем данные из памяти
 
-    if (!_pendingValidation) {                  // Обычный старт
+    if (!_persisted.pendingValidation) {                  // Обычный старт
         _initialized = true;
         _state = State::IDLE;
         return Status::SUCCESS;
@@ -34,15 +32,14 @@ GitHubOTA::Status GitHubOTA::begin(const GitHubOTA::Config& cfg, NetworkClient& 
 
     else {                                      // "Испытательный срок" для новой версии прошивки
         _initialized = true;
-        uint8_t boot_attempts = _prefs.getUChar("bootAttempts", 0);
-        _prefs.putUChar("bootAttempts", ++boot_attempts);
+        _persisted.bootAttempts++;
+        savePersistedState();
 
-        if (boot_attempts > _config.maxBootAttempts) {
+        if (_persisted.bootAttempts > _config.maxBootAttempts) {
             return performRollback();
         }
 
         else {
-            _pendingValidation = true;
             _bootTimestamp = millis();
             return Status::SUCCESS;
         }
@@ -221,9 +218,14 @@ GitHubOTA::Status GitHubOTA::update() {
 
     // если все получилось - переходим к перезагрузке и применению ошибки
     _state = State::REBOOTING;
-    _prefs.putBool("pendingValidation", true);
-    _prefs.putUChar("bootAttempts", 0);
-    _prefs.putString("prevLabel", esp_ota_get_running_partition()->label);
+    _persisted.pendingValidation = true;
+    _persisted.bootAttempts = 0;
+
+    #if defined(ESP32)
+        snprintf(_persisted.prevLabel, sizeof(_persisted.prevLabel), "%s", esp_ota_get_running_partition()->label);
+    #endif
+
+    savePersistedState();
     ESP.restart();
     
     return Status::SUCCESS;
@@ -258,34 +260,70 @@ GitHubOTA::Status GitHubOTA::setFailStatus(Status status) {
 
 GitHubOTA::Status GitHubOTA::confirmValid() {
     if (!_initialized)  return Status::NOT_INITIALIZED;
-    if (!_pendingValidation)    return Status::SUCCESS;
+    if (!_persisted.pendingValidation)    return Status::SUCCESS;
 
-    _pendingValidation = false;
-    _prefs.putBool("pendingValidation", false);
-    _prefs.putUChar("bootAttempts", 0);
+    _persisted.pendingValidation = false;
+    _persisted.bootAttempts = 0;
+    savePersistedState();
 
     return Status::SUCCESS;
 }
 
 GitHubOTA::Status GitHubOTA::rejectAndRollback() {
     if (!_initialized)  return Status::NOT_INITIALIZED;
-    if (!_pendingValidation)    return Status::SUCCESS;
+    if (!_persisted.pendingValidation)    return Status::SUCCESS;
 
     return performRollback();  
 }
 
 GitHubOTA::Status GitHubOTA::performRollback() {
-    _prefs.putUChar("bootAttempts", 0);
-    _prefs.putBool("pendingValidation", false);
+    _persisted.bootAttempts = 0;
+    _persisted.pendingValidation = false;
+    savePersistedState();
 
-    // выискиваем нужный раздел для отката
-    char savedLabel[17] = {0};
-    _prefs.getString("prevLabel", savedLabel, 17);
-    const esp_partition_t* target = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, savedLabel);
-    if (target) esp_ota_set_boot_partition(target);
+    #if defined(ESP32)  // выискиваем нужный раздел для отката, только для ESP32
+        const esp_partition_t* target = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, _persisted.prevLabel);
+        if (target) esp_ota_set_boot_partition(target);
+        _state = State::ROLLING_BACK;
+        if (_stateCallback) _stateCallback(_state);
+        ESP.restart();
+        return Status::SUCCESS;                 // формальность компилятора
+    #else
+        return Status::ROLLBACK_UNSUPPORTED;
+    #endif
+}
 
-    _state = State::ROLLING_BACK;
-    if (_stateCallback) _stateCallback(_state);
-    ESP.restart();
-    return Status::SUCCESS;                 // формальность компилятора
+GitHubOTA::Status GitHubOTA::handle() {
+    if (!_initialized) return Status::NOT_INITIALIZED;
+
+    if (_persisted.pendingValidation && _config.autoConfirmTimeoutMs != 0) {                 // включена функция автоподтверждения и обновление требует подтверждения
+        if (millis() - _bootTimestamp >= _config.autoConfirmTimeoutMs) {           // прошивка без падения отработала испытательный срок - считаем ее успешной
+            confirmValid();
+        }
+    }
+
+    if (_config.checkIntervalMs != 0 && millis() - _lastCheckMillis >= _config.checkIntervalMs) {         //  автопроверка обновлений
+        _lastCheckMillis = millis();
+        Status checkStatus = checkUpdates(), updateStatus = Status::SUCCESS;
+
+        if (checkStatus == Status::UPDATE_AVAILABLE && _config.policy == Config::Policy::AutoInstall)   updateStatus = update();   // если доступно обновление и выбранная политика работы разрешает - автоматически обновляемся
+        else if (checkStatus != Status::ALREADY_UP_TO_DATE) return checkStatus;     // возникла ошибка при проверке обновлений
+        if (updateStatus != Status::SUCCESS)    return updateStatus;
+    }
+
+    return Status::SUCCESS;
+}
+
+void GitHubOTA::loadPersistedState() {
+    EEPROM.get(0, _persisted);
+}
+
+void GitHubOTA::savePersistedState() {
+    PersistedState current;
+    EEPROM.get(0, current);
+
+    if (memcmp(&current, &_persisted, sizeof(PersistedState)) != 0) {              // пишем только если есть различия
+        EEPROM.put(0, _persisted);
+        EEPROM.commit();
+    }
 }

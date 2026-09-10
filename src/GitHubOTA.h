@@ -1,8 +1,26 @@
 // библиотека, реализующая OTA обновление из GitHub releases
 #pragma once
 #include <Arduino.h>
-#include <Preferences.h>
-#include <NetworkClient.h>
+#include <EEPROM.h>
+
+#if defined(ESP32)
+    #include <NetworkClient.h>
+    #include <HTTPClient.h>
+    #include <Update.h>
+    #include <esp_ota_ops.h>
+    #include <esp_partition.h>
+    using GitHubOTAClient = NetworkClient;
+
+#elif defined(ESP8266)
+    #include <WiFiClient.h>
+    #include <ESP8266HTTPClient.h>
+    #include <Updater.h>
+    using GitHubOTAClient = WiFiClient;
+    
+#else
+    #error "GitHubOTA: unsupported platform"
+
+#endif
 
 class GitHubOTA {
     public:
@@ -50,7 +68,8 @@ class GitHubOTA {
             ANOTHER_UPDATE_ERROR,                                   // другая ошибка при работе с Update()
             ALREADY_UP_TO_DATE,                                     // обновлено до последней версии
             UPDATE_AVAILABLE,                                       // доступно новое обновление
-            INCORRECT_CONFIG                                        // передан некорректный конфиг
+            INCORRECT_CONFIG,                                       // передан некорректный конфиг
+            ROLLBACK_UNSUPPORTED,                                   // откат не поддеживается платформой (ESP8266)
         };
         
         enum class ComparisonResult {
@@ -60,7 +79,7 @@ class GitHubOTA {
             ERROR_GET_SEMVER,
         };
 
-        Status begin(const Config& cfg, NetworkClient& networkClient);     // начало работы: сохраняет конфиг И проверяет в NVS, не является ли этот запуск "неподтверждённым" после недавнего OTA (см. confirmValid)
+        Status begin(const Config& cfg, GitHubOTAClient& networkClient);     // начало работы: сохраняет конфиг И проверяет в NVS, не является ли этот запуск "неподтверждённым" после недавнего OTA (см. confirmValid)
         Status handle();                                            // тикер из loop(): 1) если пришло время — checkUpdates()/update() по таймеру и Policy; 2) если ждём подтверждения новой прошивки — считает autoConfirmTimeoutMs и сам вызывает confirmValid(), если хост не вызвал явно
         Status checkUpdates();                                      // ручная проверка обновлений
         Status update();                                            // ручной запуск процесса обновления
@@ -75,7 +94,7 @@ class GitHubOTA {
             return _lastError;
         }
         bool isPendingValidation() const {                          // ожидает запроса валидации
-            return _pendingValidation;
+            return _persisted.pendingValidation;
         }
         void getAvailableVersion(char* vers, size_t buf_size) const;// получить номер версии, доступной для оформления
 
@@ -86,19 +105,27 @@ class GitHubOTA {
 
 
     private:
+        struct __attribute__((packed)) PersistedState {
+            char prevLabel[17] = {0};
+            uint8_t bootAttempts = 0;
+            bool pendingValidation = false;
+        };
+        
         void (*_stateCallback) (State newState) = nullptr;          // указатель на функцию - коллбэк смены состояния
         void (*_progressCallback)(size_t written, size_t total) = nullptr; // указатель на функцию - коллбэк прогресса скачивания обновления
         ComparisonResult versionComparison(const char*);
         Status mapUpdateError();                                    // переводит ошибки Update() класса в статусы типа Status
-        NetworkClient* _client = nullptr;
+        GitHubOTAClient* _client = nullptr;
         Status setFailStatus(Status status);
         Status performRollback();
+        void loadPersistedState();
+        void savePersistedState();
         Config _config;
         State _state = State::IDLE;
         Status _lastError = Status::SUCCESS;
         bool _initialized = false;
-        bool _pendingValidation = false;
         uint32_t _bootTimestamp = 0;
         char _availableVersion[16] = {0};
-        Preferences _prefs;
+        uint32_t _lastCheckMillis = 0;
+        PersistedState _persisted;
 };
