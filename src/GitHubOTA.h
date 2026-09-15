@@ -128,4 +128,16 @@ class GitHubOTA {
         char _availableVersion[16] = {0};
         uint32_t _lastCheckMillis = 0;
         PersistedState _persisted;
+
+        struct manualStreamReader {
+            Client* client;
+            uint32_t timeoutMs;
+            int read() {
+                uint32_t start = millis();
+                while (client->connected() && !client->available()) {
+                    if (millis() - start > timeoutMs) return -1;
+                }
+                return client->available() ? client->read() : -1;
+            }
+        };
 };
