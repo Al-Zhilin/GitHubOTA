@@ -35,13 +35,13 @@ class GitHubOTA {
             uint32_t httpTimeoutMs = 15000;                         // таймаут на выполнение http запроса
             uint8_t maxBootAttempts = 3;                            // сколько раз подряд можно перезагрузиться с неподтверждённой (pendingValidation) прошивкой, прежде чем begin() сам откатит устройство на предыдущий OTA-раздел
 
-            enum class Policy {                                     // выбранная "политика" работы
+            enum class Policy : uint8_t {                           // выбранная "политика" работы
                 NotifyOnly,                                         // только уведомлять
                 AutoInstall,                                        // автоматически обновляться при наличии возможности
             } policy = Policy::NotifyOnly;                          // по умолчанию: только уведомление
         };
 
-        enum class State {                                          // состояния работы
+        enum class State : uint8_t {                                // состояния работы
             IDLE,                                                   // простой
             CHECKING,                                               // проверка наличия обновлений
             UP_TO_DATE,                                             // установлена последняя версия
@@ -53,7 +53,7 @@ class GitHubOTA {
             ROLLING_BACK,                                           // откатываемся назад: обновление сломало нормальную работу
         };
 
-        enum class Status {                                         // статус (возвращается многими методами)
+        enum class Status : uint8_t {                               // статус (возвращается многими методами)
             SUCCESS,                                                // успех
             NOT_INITIALIZED,                                        // не инициализировано: вызывайте begin() перед использованием методов
             WIFI_NOT_CONNECTED,                                     // WiFi не подключен
@@ -72,7 +72,7 @@ class GitHubOTA {
             ROLLBACK_UNSUPPORTED,                                   // откат не поддеживается платформой (ESP8266)
         };
         
-        enum class ComparisonResult {
+        enum class ComparisonResult : uint8_t {
             EQUALLY,
             MORE,
             LESS,
