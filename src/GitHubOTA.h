@@ -4,12 +4,12 @@
 #include <EEPROM.h>
 
 #if defined(ESP32)
-    #include <NetworkClient.h>
+    #include <WiFiClient.h>
     #include <HTTPClient.h>
     #include <Update.h>
     #include <esp_ota_ops.h>
     #include <esp_partition.h>
-    using GitHubOTAClient = NetworkClient;
+    using GitHubOTAClient = WiFiClient;
 
 #elif defined(ESP8266)
     #include <WiFiClient.h>
