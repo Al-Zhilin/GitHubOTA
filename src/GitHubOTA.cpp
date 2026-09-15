@@ -244,7 +244,9 @@ GitHubOTA::Status GitHubOTA::mapUpdateError() {
         case UPDATE_ERROR_SPACE:
             return Status::INSUFFICIENT_SPACE;
         case UPDATE_ERROR_MD5:
-        case UPDATE_ERROR_SIGN:
+#ifdef UPDATE_ERROR_SIGN
+        case UPDATE_ERROR_SIGN:                // константа есть не во всех версиях Update.h — не завязываемся жёстко
+#endif
             return Status::CHECKSUM_MISMATCH;
         default:
             return Status::ANOTHER_UPDATE_ERROR;
