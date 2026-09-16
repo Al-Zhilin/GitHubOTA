@@ -74,9 +74,13 @@ GitHubOTA::Status GitHubOTA::checkUpdates() {
     JsonDocument doc;
     manualStreamReader reader(_client, _config.httpTimeoutMs);
     DeserializationError err = deserializeJson(doc, reader, DeserializationOption::Filter(filter));
+
     http.end();
 
-    if (err)    return setFailStatus(Status::JSON_PARSE_ERROR);
+    if (err) {
+        if (err == DeserializationError::IncompleteInput)   return setFailStatus(Status::HTTP_ERROR);
+        return setFailStatus(Status::JSON_PARSE_ERROR);
+    }
 
     ComparisonResult result = versionComparison(doc["tag_name"].as<const char*>());
 
@@ -146,6 +150,11 @@ GitHubOTA::Status GitHubOTA::update() {
     DeserializationError err = deserializeJson(doc, reader, DeserializationOption::Filter(filter));
 
     http.end();
+
+    if (err) {
+        if (err == DeserializationError::IncompleteInput)   return setFailStatus(Status::HTTP_ERROR);
+        return setFailStatus(Status::JSON_PARSE_ERROR);
+    }
 
     char assetNameMD5[64] = "";  // ожидаемое имя файла с MD5 хэшем файла прошивки
     snprintf(assetNameMD5, 64, "%s.md5", _config.assetName);
