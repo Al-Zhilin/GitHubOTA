@@ -142,7 +142,8 @@ GitHubOTA::Status GitHubOTA::update() {
 
     // парсим Json
     JsonDocument doc;
-    DeserializationError err = deserializeJson(doc, http.getStream(), DeserializationOption::Filter(filter));
+    manualStreamReader reader(_client, _config.httpTimeoutMs);
+    DeserializationError err = deserializeJson(doc, reader, DeserializationOption::Filter(filter));
 
     http.end();
 
